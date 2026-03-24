@@ -59,11 +59,11 @@ def load_data(config, data_dir: str):
 
             ts_dict = TimeSeriesDict()
             for ifo in config.general.ifos:
-                ts_dict[ifo] = TimeSeries.fetch_open_data(ifo, start, end, cache=True)
+                ts_dict[ifo] = TimeSeries.fetch_open_data(ifo, start, end, cache=False)
             ts_dict = ts_dict.resample(config.general.sample_rate)
             ts_dict.write(fname, format="hdf5")
 
 if __name__ == '__main__':
-    config = load_config(config_path='configs/config_BNS.yaml')
-    data_dir = Path("./data")
+    config = load_config(config_path='/n/holystore01/LABS/iaifi_lab/Lab/kyoon/GWDatasetGeneration/configs/config_BNS.yaml')
+    data_dir = Path('/n/holystore01/LABS/iaifi_lab/Lab/kyoon/DATA/bns/bkg')
     load_data(config, data_dir)

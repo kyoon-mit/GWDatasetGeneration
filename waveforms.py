@@ -23,12 +23,12 @@ def generate_signals(config, device: str, save: bool):
     waveform_dict = config.waveform
     right_pad = config.general.right_pad
 
-    nyquist = sample_rate / 2
-    num_samples = int(waveform_duration * sample_rate)
-    num_freqs = num_samples // 2 + 1
+    # nyquist = sample_rate / 2
+    # num_samples = int(waveform_duration * sample_rate)
+    # num_freqs = num_samples // 2 + 1
 
-    frequencies = torch.linspace(0, nyquist, num_freqs).to(device)
-    freq_mask = (frequencies >= f_min) * (frequencies < f_max).to(device)
+    # frequencies = torch.linspace(0, nyquist, num_freqs).to(device)
+    # freq_mask = (frequencies >= f_min) * (frequencies < f_max).to(device)
 
     param_dict = {}
     attrs = [x for x in dir(waveform_dict) if '__' not in x]

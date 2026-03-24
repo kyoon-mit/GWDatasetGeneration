@@ -14,4 +14,3 @@ with
 To update the number of generated signal and background events, change the `num_waveforms` parameter in the `config.yaml` file.
 
 The generated output are `sig.h5` and `bkg.h5` files, which contain the time series for the two detectors (`data`) to be used for classification. The `sig.h5` files additionally contain all parameters defining the signal waveform to be used in regression tasks or for more detailed studies.
-
