@@ -14,39 +14,40 @@ import importlib
 
 def injection(config, data_dir: str, device: str, inject: bool):
 
-    ifos = config.general.ifos
-    batch_size = config.general.batch_size
-    sample_rate = config.general.sample_rate
-    f_min = config.general.f_min
-    kernel_length = config.general.waveform_duration
+    ifos = config.general.ifos                        # number of observatories
+    batch_size = config.general.batch_size            # batch size
+    sample_rate = config.general.sample_rate          # sample rate of time-domain data (Hz)
+    bkg_sample_rate = 1024                            # default bkg sample rate (Hz)
+    f_min = config.general.f_min                      # minimum frequency (for highpass)
+    kernel_length = config.general.waveform_duration  # waveform duration (sec)
 
     # Length of filter. A segment of length fduration / 2
     # will be cropped from either side after whitening
-    fduration = config.whiten.fduration
-    fftlength = config.whiten.fftlength
-    psd_length = config.whiten.psd_length
-    overlap = config.whiten.overlap
-    average = config.whiten.average
+    fduration = config.whiten.fduration               # (gwpy doc) Duration (in seconds) of the time-domain FIR whitening filter, must be no longer than fftlength, default: 2 seconds.
+    fftlength = config.whiten.fftlength               # freq resolution = 1 / fftlength
+    psd_length = config.whiten.psd_length             # length of PSD sample (sec)
+    overlap = config.whiten.overlap                   # (gwpy doc) Overlap between windows used for FFT calculation. If left as ``None``, this will be set to ``fftlength / 2``.
+    average = config.whiten.average                   # (gwpy doc) Aggregation method to use for combining windowed FFTs. Allowed values are ``"mean"`` and ``"median"``.
 
-    psd_size = int(psd_length * sample_rate)
+    psd_size = int(psd_length * sample_rate)          # 
     kernel_size = int(kernel_length * sample_rate)
 
     # Total length of data to sample
-    window_length = psd_length + fduration + kernel_length
+    window_length = psd_length + fduration + kernel_length # (sec); adding fduration to add pad of length fduration/2 at each side
     num_samples = int(config.general.waveform_duration * sample_rate)
     num_freqs = num_samples // 2 + 1
 
-    fnames = list(data_dir.iterdir())
+    fnames = list(data_dir.iterdir())    # background samples
     dataloader = Hdf5TimeSeriesDataset(
         fnames=fnames,
         channels=ifos,
-        kernel_size=int(window_length * sample_rate),
+        kernel_size=int(window_length * bkg_sample_rate),
         batch_size=batch_size,  
         batches_per_epoch=1,  # Just doing 1 here for demonstration purposes
         coincident=False,
     )
 
-    background_samples = [x for x in dataloader][0].to(device)
+    background_samples = next(iter(dataloader)).to(device)
     #print(background_samples.shape)
 
     spectral_density = SpectralDensity(
@@ -72,10 +73,12 @@ def injection(config, data_dir: str, device: str, inject: bool):
 
         # calculation and reweighting of SNRs
         if psd.shape[-1] != num_freqs:
-            # Adding dummy dimensions for consistency
+            # interpolate requires at least 3D input [B, C, L]
+            # prepend dummy dims to satisfy this
+            # since only the last dimension (L) is resized
             while psd.ndim < 3:
                 psd = psd[None]
-            psd = torch.nn.functional.interpolate(psd, size=(num_freqs,), mode="linear")
+            psd = torch.nn.functional.interpolate(psd, size=(num_freqs,), mode='linear')
 
         func_path = config.snr_reweighting.func
         module_name, func_name = func_path.rsplit(".", 1)
@@ -92,13 +95,19 @@ def injection(config, data_dir: str, device: str, inject: bool):
         # compute network SNR
         network_snr = compute_network_snr(responses=waveforms, psd=psd, sample_rate=sample_rate, highpass=f_min)
         params['snr'] = network_snr
+
+        # Compute whitened signal
+        signal_only = torch.zeros_like(kernel)
+        signal_only[:, :, pad:-pad] += waveforms[..., -kernel_size:]
+        whitened_signal = whiten(signal_only, psd)
     else:
         whitened_injected = whiten(kernel, psd)
         params = None
+        whitened_signal = None
 
     #print(f"Kernel shape: {kernel.shape}")
     #print(f"Whitened kernel shape: {whitened_injected.shape}")
-    return whitened_injected, params
+    return whitened_injected, whitened_signal, params
 
 if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
