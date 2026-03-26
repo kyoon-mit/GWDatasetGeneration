@@ -1,21 +1,14 @@
 from gwpy.timeseries import TimeSeries, TimeSeriesDict
-import yaml
-from utils import load_config
 from pathlib import Path
-import os
-import subprocess
-#from gwosc import api,datasets
 import requests
 from gwpy.segments import Segment, SegmentList
 from functools import reduce
 import operator
 from tqdm import tqdm
 
-BASE_URL = "https://gwosc.org/api/v2/runs/O3a/timelines"
-
-def fetch_segments(config, detector="H1"):
-    timeline = f"{detector}_DATA"
-    url = f"{BASE_URL}/{timeline}/segments"
+def fetch_segments(base_url: str, detector: str='H1'):
+    timeline = f'{detector}_DATA'
+    url = f'{base_url}/{timeline}/segments'
     
     response = requests.get(url)
     response.raise_for_status()
@@ -23,47 +16,37 @@ def fetch_segments(config, detector="H1"):
     data = response.json()
     
     segments = []
-    for seg in data["results"]:
+    for seg in data['results']:
         start = int(seg['start'])
         end = int(seg['stop'])
-        duration = end - start
         segments.append(Segment(start, end))
 
     return SegmentList(segments)
 
+def load_data(base_url: str, ifos: list[str], sample_rate: int, data_dir: str):
 
-def load_data(config, data_dir: str):
-
-    background_dir = data_dir / "background_data"
+    background_dir = data_dir
     background_dir.mkdir(parents=True, exist_ok=True)
 
     segments = {}
-    for ifo in config.general.ifos:
-        segments[ifo] = fetch_segments(config, ifo)
+    for ifo in ifos:
+        segments[ifo] = fetch_segments(base_url, ifo)
     network_segments = reduce(operator.and_, segments.values())
-
-    #segments = [
-    #    (1240579783, 1240587612), 
-    #    (1240594562, 1240606748), 
-    #    (1240624412, 1240644412),
-    #    (1240644412, 1240654372),
-    #    (1240658942, 1240668052),
-    #]
 
     for (start, end) in tqdm(network_segments):
         duration = end - start
-        if duration >= config.general.waveform_duration:
-            fname = background_dir / f"background-{start}-{duration}.hdf5"
-            if fname.exists():
-                continue
+        fname = background_dir / f'background-{start}-{duration}.hdf5'
+        if fname.exists():
+            continue
 
-            ts_dict = TimeSeriesDict()
-            for ifo in config.general.ifos:
-                ts_dict[ifo] = TimeSeries.fetch_open_data(ifo, start, end, cache=False)
-            ts_dict = ts_dict.resample(config.general.sample_rate)
-            ts_dict.write(fname, format="hdf5")
+        ts_dict = TimeSeriesDict()
+        for ifo in ifos:
+            ts_dict[ifo] = TimeSeries.fetch_open_data(ifo, start, end, cache=False)
+        ts_dict = ts_dict.resample(sample_rate)
+        ts_dict.write(fname, format='hdf5')
 
 if __name__ == '__main__':
-    config = load_config(config_path='/n/holystore01/LABS/iaifi_lab/Lab/kyoon/GWDatasetGeneration/configs/config_BNS.yaml')
-    data_dir = Path('/n/holystore01/LABS/iaifi_lab/Lab/kyoon/DATA/bns/bkg')
-    load_data(config, data_dir)
+    obs = 'O3a'
+    base_url = f'https://gwosc.org/api/v2/runs/{obs}/timelines'
+    data_dir = Path(f'/n/holystore01/LABS/iaifi_lab/Lab/kyoon/DATA/{obs}_H1_L1_4096Hz')
+    load_data(base_url=base_url, ifos=['H1', 'L1'], sample_rate=4096, data_dir=data_dir)
