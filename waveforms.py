@@ -45,10 +45,7 @@ def generate_signals(config, device: str, save: bool):
         else:
             param_dict[k] = func()
 
-        if k == 'mass_2':
-            params[k] = param_dict[k].sample().to(device)
-        else:
-            params[k] = param_dict[k].sample((batch_size,)).to(device)
+        params[k] = param_dict[k].sample((batch_size,)).to(device)
 
     if config.general.type=='BNS':
         approximant = TaylorF2().to(device)
@@ -62,10 +59,25 @@ def generate_signals(config, device: str, save: bool):
     elif config.general.type=='BNS_IMRPhenomPv2':
         approximant = IMRPhenomPv2().to(device)
 
-        # get correct parameters
-        q = params['mass_2']/params['mass_1']
-        params['chirp_mass'] = (q/(1+q)**2)**(3/5.)*(params['mass_2']+params['mass_1'])
+        # enforce m2 <= m1 by sorting
+        m1 = torch.max(params['mass_1'], params['mass_2'])
+        m2 = torch.min(params['mass_1'], params['mass_2'])
+        params['mass_1'], params['mass_2'] = m1, m2
+
+        q = params['mass_2'] / params['mass_1']
+        params['chirp_mass'] = (q / (1 + q)**2)**(3/5.) * (params['mass_2'] + params['mass_1'])
         params['mass_ratio'] = q
+
+        # convert spherical spin parameters to Cartesian components
+        # phi_12 = phi_1 - phi_2, phi_jl sets the azimuthal frame
+        phi_1 = params['phi_jl']
+        phi_2 = params['phi_jl'] - params['phi_12']
+        params['s1x'] = params['a_1'] * torch.sin(params['tilt_1']) * torch.cos(phi_1)
+        params['s1y'] = params['a_1'] * torch.sin(params['tilt_1']) * torch.sin(phi_1)
+        params['s1z'] = params['a_1'] * torch.cos(params['tilt_1'])
+        params['s2x'] = params['a_2'] * torch.sin(params['tilt_2']) * torch.cos(phi_2)
+        params['s2y'] = params['a_2'] * torch.sin(params['tilt_2']) * torch.sin(phi_2)
+        params['s2z'] = params['a_2'] * torch.cos(params['tilt_2'])
 
     else:
         approximant = IMRPhenomPv2().to(device)
@@ -87,14 +99,14 @@ def generate_signals(config, device: str, save: bool):
 
     hc, hp = waveform_generator(**params)
 
-    # Waveform projection
-    dec = Cosine()
-    psi = Uniform(0, torch.pi)
-    phi = Uniform(-torch.pi, torch.pi)
-    
-    params['dec'] = dec.sample((batch_size,)).to(device)
-    params['psi'] = psi.sample((batch_size,)).to(device)
-    params['phi'] = phi.sample((batch_size,)).to(device)
+    # Waveform projection: use config-defined priors if provided, else defaults
+    # dec ~ Cosine (isotropic sky), psi ~ Uniform(0, pi), phi/RA ~ Uniform(-pi, pi)
+    if 'dec' not in params:
+        params['dec'] = Cosine().sample((batch_size,)).to(device)
+    if 'psi' not in params:
+        params['psi'] = Uniform(0, torch.pi).sample((batch_size,)).to(device)
+    if 'phi' not in params:
+        params['phi'] = Uniform(-torch.pi, torch.pi).sample((batch_size,)).to(device)
 
     tensors, vertices = get_ifo_geometry(*ifos)
 

@@ -33,7 +33,13 @@ def injection(config, data_dir: str, device: str, inject: bool):
     num_samples = int(config.general.waveform_duration * sample_rate)
     num_freqs = num_samples // 2 + 1
 
-    fnames = list(data_dir.iterdir())    # background samples
+    # Filter out files that are too short to yield a valid window.
+    # Filenames encode duration as the last component: background-{start}-{duration}.hdf5
+    # A file needs at least window_length seconds of data (psd_length + fduration + kernel_length).
+    min_samples = int(window_length * bkg_sample_rate)
+    fnames = [f for f in data_dir.iterdir() if f.stat().st_size > 0]
+    fnames = [f for f in fnames if int(f.stem.rsplit('-', 1)[-1]) * bkg_sample_rate >= min_samples]
+
     dataloader = Hdf5TimeSeriesDataset(
         fnames=fnames,
         channels=ifos,
@@ -108,7 +114,7 @@ def injection(config, data_dir: str, device: str, inject: bool):
         params = None
         whitened_signal = None
 
-    return whitened_injected, whitened_signal, raw_signal, whitened_bkg, raw_bkg, params
+    return whitened_injected, whitened_signal, raw_signal[:, :, pad:-pad], whitened_bkg, raw_bkg[:, :, pad:-pad], params
 
 if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
