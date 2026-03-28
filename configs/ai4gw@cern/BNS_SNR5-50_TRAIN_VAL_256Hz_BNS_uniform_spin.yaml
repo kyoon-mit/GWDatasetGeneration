@@ -64,4 +64,4 @@ whiten:
 
 snr_reweighting: 
     func: ml4gw.distributions.PowerLaw
-    args: [5,50]
+    args: [5, 50, -3]
