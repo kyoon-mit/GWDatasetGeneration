@@ -1,14 +1,11 @@
 import torch
-import matplotlib.pyplot as plt
-from ml4gw.distributions import PowerLaw, Sine, Cosine, DeltaFunction
-from torch.distributions import Uniform
-import yaml
 import importlib
-from ml4gw.waveforms import IMRPhenomD, TaylorF2
+from ml4gw.distributions import Cosine
+from torch.distributions import Uniform
+from ml4gw.waveforms import IMRPhenomPv2, TaylorF2 # IMRPhenomPv2 uses full 3D
 from ml4gw.waveforms.generator import TimeDomainCBCWaveformGenerator
 from ml4gw.waveforms.conversion import chirp_mass_and_mass_ratio_to_components
 from ml4gw.gw import get_ifo_geometry, compute_observed_strain
-import numpy as np
 from utils import load_config
 
 def generate_signals(config, device: str, save: bool):
@@ -54,17 +51,24 @@ def generate_signals(config, device: str, save: bool):
             params[k] = param_dict[k].sample((batch_size,)).to(device)
 
     if config.general.type=='BNS':
-
         approximant = TaylorF2().to(device)
 
         # get correct parameters
         q = params['mass_2']/params['mass_1']
         params['chirp_mass'] = (q/(1+q)**2)**(3/5.)*(params['mass_2']+params['mass_1'])
         params['mass_ratio'] = q
-        params["chi1"], params["chi2"] = params["s1z"], params["s2z"]
+        params["chi1"], params["chi2"] = params["s1z"], params["s2z"] # ???
+
+    elif config.general.type=='BNS_IMRPhenomPv2':
+        approximant = IMRPhenomPv2().to(device)
+
+        # get correct parameters
+        q = params['mass_2']/params['mass_1']
+        params['chirp_mass'] = (q/(1+q)**2)**(3/5.)*(params['mass_2']+params['mass_1'])
+        params['mass_ratio'] = q
 
     else:
-        approximant = IMRPhenomD().to(device)
+        approximant = IMRPhenomPv2().to(device)
 
         params["mass_1"], params["mass_2"] = chirp_mass_and_mass_ratio_to_components(
             params["chirp_mass"], params["mass_ratio"]

@@ -1,15 +1,11 @@
 from ml4gw.transforms import SpectralDensity
-import h5py
-import yaml
 import torch
 from pathlib import Path
-import numpy as np
 from ml4gw.dataloading import Hdf5TimeSeriesDataset
 from ml4gw.transforms import Whiten
 from utils import load_config
 from waveforms import generate_signals
 from ml4gw.gw import compute_network_snr,reweight_snrs
-from ml4gw.distributions import PowerLaw
 import importlib
 
 def injection(config, data_dir: str, device: str, inject: bool):
@@ -17,7 +13,7 @@ def injection(config, data_dir: str, device: str, inject: bool):
     ifos = config.general.ifos                        # number of observatories
     batch_size = config.general.batch_size            # batch size
     sample_rate = config.general.sample_rate          # sample rate of time-domain data (Hz)
-    bkg_sample_rate = 1024                            # default bkg sample rate (Hz)
+    bkg_sample_rate = config.general.bkg_sample_rate  # sample rate of background data (Hz)
     f_min = config.general.f_min                      # minimum frequency (for highpass)
     kernel_length = config.general.waveform_duration  # waveform duration (sec)
 
@@ -44,10 +40,11 @@ def injection(config, data_dir: str, device: str, inject: bool):
         kernel_size=int(window_length * bkg_sample_rate),
         batch_size=batch_size,  
         batches_per_epoch=1,  # Just doing 1 here for demonstration purposes
-        coincident=False,
+        coincident=False,     # random shift
     )
 
     background_samples = next(iter(dataloader)).to(device)
+    background_samples = background_samples[::]
     #print(background_samples.shape)
 
     spectral_density = SpectralDensity(
@@ -87,9 +84,12 @@ def injection(config, data_dir: str, device: str, inject: bool):
         args = config.snr_reweighting.args
         target_snrs = func(*args).sample((batch_size,)).to(device)
 
-        waveforms = reweight_snrs(responses=waveforms,target_snrs=target_snrs,psd=psd,sample_rate=sample_rate,highpass=f_min,)
+        waveforms = reweight_snrs(responses=waveforms, target_snrs=target_snrs, psd=psd, sample_rate=sample_rate, highpass=f_min,)
 
+        raw_bkg = injected.clone()
         injected[:, :, pad:-pad] += waveforms[..., -kernel_size:]
+
+        ### WHITENING
         whitened_injected = whiten(injected, psd)
 
         # compute network SNR
@@ -97,17 +97,18 @@ def injection(config, data_dir: str, device: str, inject: bool):
         params['snr'] = network_snr
 
         # Compute whitened signal
-        signal_only = torch.zeros_like(kernel)
-        signal_only[:, :, pad:-pad] += waveforms[..., -kernel_size:]
-        whitened_signal = whiten(signal_only, psd)
+        raw_signal = torch.zeros_like(kernel)
+        raw_signal[:, :, pad:-pad] += waveforms[..., -kernel_size:]
+        whitened_signal = whiten(raw_signal, psd)
+
+        # Compute whitened background
+        whitened_bkg = whiten(raw_bkg, psd)
     else:
         whitened_injected = whiten(kernel, psd)
         params = None
         whitened_signal = None
 
-    #print(f"Kernel shape: {kernel.shape}")
-    #print(f"Whitened kernel shape: {whitened_injected.shape}")
-    return whitened_injected, whitened_signal, params
+    return whitened_injected, whitened_signal, raw_signal, whitened_bkg, raw_bkg, params
 
 if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
