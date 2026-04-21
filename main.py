@@ -1,12 +1,20 @@
 from utils import load_config
 from injections import injection
 import torch
+import numpy as np
 import argparse
 from pathlib import Path
 import h5py
 import os
 import gc
 from tqdm import tqdm
+from gwpy.timeseries import TimeSeries
+
+
+def _resample(tensor, orig_freq, new_freq):
+    arr = tensor.cpu().numpy()
+    return np.array([[TimeSeries(arr[b, c], sample_rate=orig_freq).resample(new_freq).value
+                      for c in range(arr.shape[1])] for b in range(arr.shape[0])])
 
 def main(config_path: str, data_dir: str, output_dir: str, num_waveforms: int = None):
 
@@ -35,13 +43,15 @@ def main(config_path: str, data_dir: str, output_dir: str, num_waveforms: int = 
             if not outfile.exists():
                 whitened_injected, whitened_signal, raw_signal, whitened_bkg, raw_bkg, params =\
                     injection(config, data_dir=data_dir, device=device, inject=True)
+                orig_freq = config.general.sample_rate
+                new_freq = orig_freq // downsample_rate
                 # Shape: (B, nifos, L)
                 with h5py.File(outfile, 'w') as h5f:
-                    h5f.create_dataset('whitened_injected', data=whitened_injected.cpu().numpy()[..., ::downsample_rate])
-                    h5f.create_dataset('whitened_signal', data=whitened_signal.cpu().numpy()[..., ::downsample_rate])
-                    h5f.create_dataset('whitened_bkg', data=whitened_bkg.cpu().numpy()[..., ::downsample_rate])
-                    h5f.create_dataset('raw_signal', data=raw_signal.cpu().numpy()[..., ::downsample_rate])
-                    h5f.create_dataset('raw_bkg', data=raw_bkg.cpu().numpy()[..., ::downsample_rate])
+                    h5f.create_dataset('whitened_injected', data=_resample(whitened_injected, orig_freq, new_freq))
+                    h5f.create_dataset('whitened_signal', data=_resample(whitened_signal, orig_freq, new_freq))
+                    h5f.create_dataset('whitened_bkg', data=_resample(whitened_bkg, orig_freq, new_freq))
+                    h5f.create_dataset('raw_signal', data=_resample(raw_signal, orig_freq, new_freq))
+                    h5f.create_dataset('raw_bkg', data=_resample(raw_bkg, orig_freq, new_freq))
                     # h5f.create_dataset('whitened_injected', data=whitened_injected.cpu().numpy())
                     # h5f.create_dataset('whitened_signal', data=whitened_signal.cpu().numpy())
                     # h5f.create_dataset('whitened_bkg', data=whitened_bkg.cpu().numpy())

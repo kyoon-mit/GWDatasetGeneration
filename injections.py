@@ -1,5 +1,6 @@
 from ml4gw.transforms import SpectralDensity
 import torch
+import h5py
 from pathlib import Path
 from ml4gw.dataloading import Hdf5TimeSeriesDataset
 from ml4gw.transforms import Whiten
@@ -16,6 +17,22 @@ def injection(config, data_dir: str, device: str, inject: bool):
     bkg_sample_rate = config.general.bkg_sample_rate  # sample rate of background data (Hz)
     f_min = config.general.f_min                      # minimum frequency (for highpass)
     kernel_length = config.general.waveform_duration  # waveform duration (sec)
+
+    if sample_rate != bkg_sample_rate:
+        raise ValueError(
+            f"sample_rate ({sample_rate}) must equal bkg_sample_rate ({bkg_sample_rate}): "
+            "both whitening and indexing assume the background is at sample_rate."
+        )
+
+    # Verify the actual sample rate of the background files matches bkg_sample_rate.
+    fnames_all = [f for f in data_dir.iterdir() if f.stat().st_size > 0]
+    with h5py.File(fnames_all[0], 'r') as f:
+        actual_rate = round(1 / f[ifos[0]].attrs['dx'])
+    if actual_rate != bkg_sample_rate:
+        raise ValueError(
+            f"Background files are at {actual_rate} Hz but bkg_sample_rate={bkg_sample_rate} Hz. "
+            "Re-fetch the background data at the correct rate or update bkg_sample_rate."
+        )
 
     # Length of filter. A segment of length fduration / 2
     # will be cropped from either side after whitening
@@ -37,8 +54,7 @@ def injection(config, data_dir: str, device: str, inject: bool):
     # Filenames encode duration as the last component: background-{start}-{duration}.hdf5
     # A file needs at least window_length seconds of data (psd_length + fduration + kernel_length).
     min_samples = int(window_length * bkg_sample_rate)
-    fnames = [f for f in data_dir.iterdir() if f.stat().st_size > 0]
-    fnames = [f for f in fnames if int(f.stem.rsplit('-', 1)[-1]) * bkg_sample_rate >= min_samples]
+    fnames = [f for f in fnames_all if int(f.stem.rsplit('-', 1)[-1]) * bkg_sample_rate >= min_samples]
 
     dataloader = Hdf5TimeSeriesDataset(
         fnames=fnames,
