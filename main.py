@@ -10,6 +10,13 @@ import gc
 from tqdm import tqdm
 from gwpy.timeseries import TimeSeries
 
+def _is_valid(whitened_signal, raw_signal):
+    for t in (whitened_signal, raw_signal):
+        if torch.isnan(t).any():
+            return False
+        if (t.abs().sum(dim=(-2, -1)) == 0).any():
+            return False
+    return True
 
 def _resample(tensor, orig_freq, new_freq):
     arr = tensor.cpu().numpy()
@@ -35,6 +42,8 @@ def main(config_path: str, data_dir: str, output_dir: str, num_waveforms: int = 
         os.makedirs(out_dir)
 
     total = 0
+    consecutive_invalid = 0
+    max_consecutive_invalid = 10
     with tqdm(total=config.general.num_waveforms, desc="Processing", unit="step") as pbar:
         while total<config.general.num_waveforms:
             # generate signals
@@ -43,6 +52,21 @@ def main(config_path: str, data_dir: str, output_dir: str, num_waveforms: int = 
             if not outfile.exists():
                 whitened_injected, whitened_signal, raw_signal, whitened_bkg, raw_bkg, params =\
                     injection(config, data_dir=data_dir, device=device, inject=True)
+
+                if not _is_valid(whitened_signal, raw_signal):
+                    consecutive_invalid += 1
+                    del whitened_injected, whitened_signal, whitened_bkg, raw_signal, raw_bkg, params
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                    if consecutive_invalid >= max_consecutive_invalid:
+                        raise RuntimeError(
+                            f"Aborting: {consecutive_invalid} consecutive batches contained "
+                            "only NaN or zero signals. Check waveform generation parameters."
+                        )
+                    continue
+
+                consecutive_invalid = 0
+
                 orig_freq = config.general.sample_rate
                 new_freq = orig_freq // downsample_rate
                 # Shape: (B, nifos, L)

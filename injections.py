@@ -109,7 +109,8 @@ def injection(config, data_dir: str, device: str, inject: bool):
         waveforms = reweight_snrs(responses=waveforms, target_snrs=target_snrs, psd=psd, sample_rate=sample_rate, highpass=f_min,)
 
         raw_bkg = injected.clone()
-        injected[:, :, pad:-pad] += waveforms[..., -kernel_size:]
+        waveforms_f32 = waveforms.float()
+        injected[:, :, pad:-pad] += waveforms_f32[..., -kernel_size:]
 
         ### WHITENING
         whitened_injected = whiten(injected, psd)
@@ -120,7 +121,7 @@ def injection(config, data_dir: str, device: str, inject: bool):
 
         # Compute whitened signal
         raw_signal = torch.zeros_like(kernel)
-        raw_signal[:, :, pad:-pad] += waveforms[..., -kernel_size:]
+        raw_signal[:, :, pad:-pad] += waveforms_f32[..., -kernel_size:]
         whitened_signal = whiten(raw_signal, psd)
 
         # Compute whitened background
