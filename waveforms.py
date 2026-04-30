@@ -8,6 +8,35 @@ from ml4gw.waveforms.conversion import chirp_mass_and_mass_ratio_to_components
 from ml4gw.gw import get_ifo_geometry, compute_observed_strain
 from utils import load_config
 
+def _rejection_sample_masses(mc_dist, q_dist, m1_min, m1_max, m2_min, m2_max, batch_size, device):
+    """
+    Sample (chirp_mass, mass_ratio) uniformly and reject pairs whose component
+    masses fall outside [m1_min, m1_max] x [m2_min, m2_max]. Loops until
+    exactly batch_size valid samples are collected.
+    """
+    accepted_mc, accepted_q, accepted_m1, accepted_m2 = [], [], [], []
+    remaining = batch_size
+
+    while remaining > 0:
+        n = max(4 * remaining, batch_size)
+        mc = mc_dist.sample((n,)).to(device)
+        q  = q_dist.sample((n,)).to(device)
+        m1, m2 = chirp_mass_and_mass_ratio_to_components(mc, q)
+
+        mask = (m1 >= m1_min) & (m1 <= m1_max) & (m2 >= m2_min) & (m2 <= m2_max)
+        accepted_mc.append(mc[mask])
+        accepted_q.append(q[mask])
+        accepted_m1.append(m1[mask])
+        accepted_m2.append(m2[mask])
+        remaining -= int(mask.sum().item())
+
+    mc = torch.cat(accepted_mc)[:batch_size]
+    q  = torch.cat(accepted_q)[:batch_size]
+    m1 = torch.cat(accepted_m1)[:batch_size]
+    m2 = torch.cat(accepted_m2)[:batch_size]
+    return mc, q, m1, m2
+
+
 def generate_signals(config, device: str, save: bool):
     
     waveform_duration = config.general.waveform_duration
@@ -66,9 +95,20 @@ def generate_signals(config, device: str, save: bool):
         approximant = IMRPhenomPv2().to(device)
 
         if 'chirp_mass' in params and 'mass_ratio' in params:
-            params['mass_1'], params['mass_2'] = chirp_mass_and_mass_ratio_to_components(
-                params['chirp_mass'], params['mass_ratio']
-            )
+            if getattr(config.general, 'rejection_sampling', False):
+                m1_bounds = config.general.m1_bounds
+                m2_bounds = config.general.m2_bounds
+                params['chirp_mass'], params['mass_ratio'], params['mass_1'], params['mass_2'] = \
+                    _rejection_sample_masses(
+                        param_dict['chirp_mass'], param_dict['mass_ratio'],
+                        m1_bounds[0], m1_bounds[1],
+                        m2_bounds[0], m2_bounds[1],
+                        batch_size, device,
+                    )
+            else:
+                params['mass_1'], params['mass_2'] = chirp_mass_and_mass_ratio_to_components(
+                    params['chirp_mass'], params['mass_ratio']
+                )
         else:
             # enforce m2 <= m1 by sorting
             m1 = torch.max(params['mass_1'], params['mass_2'])
