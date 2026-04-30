@@ -90,13 +90,15 @@ def _merge_group(src_group, out_group, chunk_size):
 def combine_h5(input_dir, output_path, pattern, chunk_size):
     paths = sorted(glob.glob(os.path.join(input_dir, pattern)))
     if not paths:
-        raise FileNotFoundError("No input files found in %s with %s" % (input_dir, pattern))
+        logging.warning("No input files found in %s with pattern %s — skipping.", input_dir, pattern)
+        return False
 
     with h5py.File(output_path, "w") as out_file:
         for path in tqdm(paths, desc="Processing files"):
             logging.info("Processing %s", path)
             with h5py.File(path, "r") as in_file:
                 _merge_group(in_file, out_file, chunk_size)
+    return True
 
 
 def _remove_sig0_files(input_dir, pattern):
@@ -160,27 +162,27 @@ def main():
     )
     # If output is provided, behave as before (combine files in a single directory).
     if args.output:
-        combine_h5(args.input_dir, args.output, args.pattern, args.chunk_size)
-        # remove intermediate sig_*0.h5 files from the input directory
-        _remove_sig0_files(args.input_dir, args.pattern)
+        combined = combine_h5(args.input_dir, args.output, args.pattern, args.chunk_size)
+        if combined:
+            # remove intermediate sig_*0.h5 files from the input directory
+            _remove_sig0_files(args.input_dir, args.pattern)
         return
 
-    # Otherwise, expect `input_dir` to contain the three subdirectories: train, test, val
+    # Otherwise, expect `input_dir` to contain train/test/val subdirectories.
+    # Subdirectories that are missing or have no matching files are skipped with a warning.
     subsets = ["train", "test", "val"]
-    missing = [s for s in subsets if not os.path.isdir(os.path.join(args.input_dir, s))]
-    if missing:
-        raise ValueError(
-            "Output not specified and the input directory does not contain all required subdirectories: %s"
-            % ",".join(subsets)
-        )
 
     for s in subsets:
         in_dir = os.path.join(args.input_dir, s)
+        if not os.path.isdir(in_dir):
+            logging.warning("Subdirectory %s not found — skipping.", in_dir)
+            continue
         out_path = os.path.join(in_dir, f"{args.out_prefix}_{s}.h5")
         logging.info("Combining %s -> %s", in_dir, out_path)
-        combine_h5(in_dir, out_path, args.pattern, args.chunk_size)
-        # remove intermediate sig_*0.h5 files in this subset directory
-        _remove_sig0_files(in_dir, args.pattern)
+        combined = combine_h5(in_dir, out_path, args.pattern, args.chunk_size)
+        if combined:
+            # remove intermediate sig_*0.h5 files in this subset directory
+            _remove_sig0_files(in_dir, args.pattern)
 
 
 if __name__ == "__main__":

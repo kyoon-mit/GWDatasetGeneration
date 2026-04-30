@@ -45,7 +45,13 @@ def generate_signals(config, device: str, save: bool):
         else:
             param_dict[k] = func()
 
-        params[k] = param_dict[k].sample((batch_size,)).to(device)
+        # if the distribution was built with tensor args it already has batch_shape
+        # (e.g. Uniform(1.0, mass_1_tensor)), so just call .sample() to avoid
+        # producing shape (batch_size, batch_size)
+        if param_dict[k].batch_shape == torch.Size([batch_size]):
+            params[k] = param_dict[k].sample().to(device)
+        else:
+            params[k] = param_dict[k].sample((batch_size,)).to(device)
 
     if config.general.type=='BNS':
         approximant = TaylorF2().to(device)
@@ -59,14 +65,19 @@ def generate_signals(config, device: str, save: bool):
     elif config.general.type=='BNS_IMRPhenomPv2':
         approximant = IMRPhenomPv2().to(device)
 
-        # enforce m2 <= m1 by sorting
-        m1 = torch.max(params['mass_1'], params['mass_2'])
-        m2 = torch.min(params['mass_1'], params['mass_2'])
-        params['mass_1'], params['mass_2'] = m1, m2
+        if 'chirp_mass' in params and 'mass_ratio' in params:
+            params['mass_1'], params['mass_2'] = chirp_mass_and_mass_ratio_to_components(
+                params['chirp_mass'], params['mass_ratio']
+            )
+        else:
+            # enforce m2 <= m1 by sorting
+            m1 = torch.max(params['mass_1'], params['mass_2'])
+            m2 = torch.min(params['mass_1'], params['mass_2'])
+            params['mass_1'], params['mass_2'] = m1, m2
 
-        q = params['mass_2'] / params['mass_1']
-        params['chirp_mass'] = (q / (1 + q)**2)**(3/5.) * (params['mass_2'] + params['mass_1'])
-        params['mass_ratio'] = q
+            q = params['mass_2'] / params['mass_1']
+            params['chirp_mass'] = (q / (1 + q)**2)**(3/5.) * (params['mass_2'] + params['mass_1'])
+            params['mass_ratio'] = q
 
         # convert spherical spin parameters to Cartesian components
         # phi_12 = phi_1 - phi_2, phi_jl sets the azimuthal frame
