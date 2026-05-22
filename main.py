@@ -10,12 +10,11 @@ import gc
 from tqdm import tqdm
 from gwpy.timeseries import TimeSeries
 
-def _is_valid(whitened_signal, raw_signal):
-    for t in (whitened_signal, raw_signal):
-        if torch.isnan(t).any():
-            return False
-        if (t.abs().sum(dim=(-2, -1)) == 0).any():
-            return False
+def _is_valid(whitened_signal):
+    if torch.isnan(whitened_signal).any():
+        return False
+    if (whitened_signal.abs().sum(dim=(-2, -1)) == 0).any():
+        return False
     return True
 
 def _resample(tensor, orig_freq, new_freq):
@@ -23,7 +22,7 @@ def _resample(tensor, orig_freq, new_freq):
     return np.array([[TimeSeries(arr[b, c], sample_rate=orig_freq).resample(new_freq).value
                       for c in range(arr.shape[1])] for b in range(arr.shape[0])])
 
-def main(config_path: str, data_dir: str, output_dir: str, num_waveforms: int = None):
+def main(config_path: str, data_dir: str, output_dir: str, prefix: str='sig', num_waveforms: int = None):
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     config = load_config(args.config)
@@ -47,15 +46,15 @@ def main(config_path: str, data_dir: str, output_dir: str, num_waveforms: int = 
     with tqdm(total=config.general.num_waveforms, desc="Processing", unit="step") as pbar:
         while total<config.general.num_waveforms:
             # generate signals
-            outfile = out_dir / 'sig_{0}.h5'.format(total)      # sig + bkg
+            outfile = out_dir / f'{prefix}_{total}.h5'      # sig + bkg
 
             if not outfile.exists():
-                whitened_injected, whitened_signal, raw_signal, whitened_bkg, raw_bkg, params =\
+                whitened_injected, whitened_signal, whitened_bkg, params =\
                     injection(config, data_dir=data_dir, device=device, inject=True)
 
-                if not _is_valid(whitened_signal, raw_signal):
+                if not _is_valid(whitened_signal):
                     consecutive_invalid += 1
-                    del whitened_injected, whitened_signal, whitened_bkg, raw_signal, raw_bkg, params
+                    del whitened_injected, whitened_signal, whitened_bkg, params
                     gc.collect()
                     torch.cuda.empty_cache()
                     if consecutive_invalid >= max_consecutive_invalid:
@@ -74,8 +73,8 @@ def main(config_path: str, data_dir: str, output_dir: str, num_waveforms: int = 
                     h5f.create_dataset('whitened_injected', data=_resample(whitened_injected, orig_freq, new_freq))
                     h5f.create_dataset('whitened_signal', data=_resample(whitened_signal, orig_freq, new_freq))
                     h5f.create_dataset('whitened_bkg', data=_resample(whitened_bkg, orig_freq, new_freq))
-                    h5f.create_dataset('raw_signal', data=_resample(raw_signal, orig_freq, new_freq))
-                    h5f.create_dataset('raw_bkg', data=_resample(raw_bkg, orig_freq, new_freq))
+                    # h5f.create_dataset('raw_signal', data=_resample(raw_signal, orig_freq, new_freq))
+                    # h5f.create_dataset('raw_bkg', data=_resample(raw_bkg, orig_freq, new_freq))
                     # h5f.create_dataset('whitened_injected', data=whitened_injected.cpu().numpy())
                     # h5f.create_dataset('whitened_signal', data=whitened_signal.cpu().numpy())
                     # h5f.create_dataset('whitened_bkg', data=whitened_bkg.cpu().numpy())
@@ -84,7 +83,7 @@ def main(config_path: str, data_dir: str, output_dir: str, num_waveforms: int = 
                     for k in params.keys():
                         h5f.create_dataset(k, data=params[k].cpu().numpy())
 
-                del whitened_injected, whitened_signal, whitened_bkg, raw_signal, raw_bkg, params
+                del whitened_injected, whitened_signal, whitened_bkg, params
                 gc.collect()
                 torch.cuda.empty_cache()
 
@@ -129,6 +128,12 @@ if __name__ == "__main__":
         default=None,
         help="Number of waveforms to generate (overrides config)"
     )
+    parser.add_argument(
+        "--prefix",
+        type=str,
+        default="sig",
+        help="Prefix for output files"
+    )
     args = parser.parse_args()
 
-    main(config_path=args.config, data_dir=args.data, output_dir=args.out, num_waveforms=args.num_waveforms)
+    main(config_path=args.config, data_dir=args.data, output_dir=args.out, prefix=args.prefix, num_waveforms=args.num_waveforms)

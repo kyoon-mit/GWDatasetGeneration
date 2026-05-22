@@ -10,30 +10,41 @@ from utils import load_config
 
 def _rejection_sample_masses(mc_dist, q_dist, m1_min, m1_max, m2_min, m2_max, batch_size, device):
     """
-    Sample (chirp_mass, mass_ratio) uniformly and reject pairs whose component
-    masses fall outside [m1_min, m1_max] x [m2_min, m2_max]. Loops until
-    exactly batch_size valid samples are collected.
+    Sample batch_size (chirp_mass, mass_ratio) pairs with uniform Mc marginal.
+
+    Mc is sampled once and held fixed while q is rejection-sampled independently
+    per event, so every feasible Mc value appears with equal probability.
+    If an Mc has no valid q after max_q_attempts, it is resampled (infeasible Mc
+    values are excluded from the output distribution).
     """
-    accepted_mc, accepted_q, accepted_m1, accepted_m2 = [], [], [], []
-    remaining = batch_size
+    max_q_attempts = 50
 
-    while remaining > 0:
-        n = max(4 * remaining, batch_size)
-        mc = mc_dist.sample((n,)).to(device)
-        q  = q_dist.sample((n,)).to(device)
-        m1, m2 = chirp_mass_and_mass_ratio_to_components(mc, q)
+    mc = mc_dist.sample((batch_size,)).to(device)
+    q  = q_dist.sample((batch_size,)).to(device)
+    m1, m2 = chirp_mass_and_mass_ratio_to_components(mc, q)
+    valid = (m1 >= m1_min) & (m1 <= m1_max) & (m2 >= m2_min) & (m2 <= m2_max)
+    q_attempts = torch.zeros(batch_size, dtype=torch.long, device=device)
 
-        mask = (m1 >= m1_min) & (m1 <= m1_max) & (m2 >= m2_min) & (m2 <= m2_max)
-        accepted_mc.append(mc[mask])
-        accepted_q.append(q[mask])
-        accepted_m1.append(m1[mask])
-        accepted_m2.append(m2[mask])
-        remaining -= int(mask.sum().item())
+    while not valid.all():
+        inv = ~valid
+        q_attempts[inv] += 1
 
-    mc = torch.cat(accepted_mc)[:batch_size]
-    q  = torch.cat(accepted_q)[:batch_size]
-    m1 = torch.cat(accepted_m1)[:batch_size]
-    m2 = torch.cat(accepted_m2)[:batch_size]
+        # Resample Mc for events whose Mc is infeasible (no valid q exists)
+        stuck = inv & (q_attempts >= max_q_attempts)
+        if stuck.any():
+            mc[stuck] = mc_dist.sample((int(stuck.sum()),)).to(device)
+            q_attempts[stuck] = 0
+
+        # Resample only q for all still-invalid events, keeping Mc fixed
+        new_q = q_dist.sample((int(inv.sum()),)).to(device)
+        new_m1, new_m2 = chirp_mass_and_mass_ratio_to_components(mc[inv], new_q)
+        new_valid = (new_m1 >= m1_min) & (new_m1 <= m1_max) & (new_m2 >= m2_min) & (new_m2 <= m2_max)
+
+        q[inv] = new_q
+        m1[inv] = new_m1
+        m2[inv] = new_m2
+        valid[inv] = new_valid
+
     return mc, q, m1, m2
 
 

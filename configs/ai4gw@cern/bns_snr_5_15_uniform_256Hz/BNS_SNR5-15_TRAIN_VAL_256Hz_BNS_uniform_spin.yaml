@@ -13,12 +13,18 @@ general:
     batch_size: 100
 
 waveform:
-    chirp_mass:
+    # chirp_mass:
+    #     func: torch.distributions.Uniform
+    #     args: [0.87, 2.22]
+    # mass_ratio:
+    #     func: torch.distributions.Uniform
+    #     args: [0.5, 1.0]
+    mass_1:
+        func: transforms.Triangular 
+        args: [1.0, 2.5, 2.5]
+    mass_2:
         func: torch.distributions.Uniform
-        args: [0.87, 2.22]
-    mass_ratio:
-        func: torch.distributions.Uniform
-        args: [0.5, 1.0]
+        args: [1.0, mass_1]
     a_1:
         func: torch.distributions.Uniform
         args: [0, 0.4]

@@ -139,19 +139,24 @@ def main():
     )
     parser.add_argument(
         "--pattern",
-        default="sig_*0.h5",
-        help="Glob pattern for input files (default: *.h5).",
+        default="sig_[0-9]*.h5",
+        help="Glob pattern for input files (default: sig_[0-9]*.h5).",
     )
     parser.add_argument(
         "--out_prefix",
         default="sig_combined",
-        help="Prefix for out files (default: *.h5).",
+        help="Prefix for output combined files (default: sig_combined).",
     )
     parser.add_argument(
         "--chunk_size",
         type=int,
         default=1024,
         help="Rows to read/write per chunk (default: 1024).",
+    )
+    parser.add_argument(
+        "--no-delete",
+        action="store_false",
+        help="Keep intermediate files after combining (default: delete them).",
     )
     parser.add_argument("--verbose", action="store_true", help="Enable info logging.")
     args = parser.parse_args()
@@ -163,8 +168,7 @@ def main():
     # If output is provided, behave as before (combine files in a single directory).
     if args.output:
         combined = combine_h5(args.input_dir, args.output, args.pattern, args.chunk_size)
-        if combined:
-            # remove intermediate sig_*0.h5 files from the input directory
+        if combined and not args.no_delete:
             _remove_sig0_files(args.input_dir, args.pattern)
         return
 
@@ -180,8 +184,7 @@ def main():
         out_path = os.path.join(in_dir, f"{args.out_prefix}_{s}.h5")
         logging.info("Combining %s -> %s", in_dir, out_path)
         combined = combine_h5(in_dir, out_path, args.pattern, args.chunk_size)
-        if combined:
-            # remove intermediate sig_*0.h5 files in this subset directory
+        if combined and not args.no_delete:
             _remove_sig0_files(in_dir, args.pattern)
 
 

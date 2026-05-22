@@ -131,7 +131,7 @@ def injection(config, data_dir: str, device: str, inject: bool):
         params = None
         whitened_signal = None
 
-    return whitened_injected, whitened_signal, raw_signal[:, :, pad:-pad], whitened_bkg, raw_bkg[:, :, pad:-pad], params
+    return whitened_injected, whitened_signal, whitened_bkg, params
 
 if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
