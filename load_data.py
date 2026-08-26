@@ -41,12 +41,11 @@ def load_data(base_url: str, ifos: list[str], sample_rate: int, data_dir: str):
 
         ts_dict = TimeSeriesDict()
         for ifo in ifos:
-            ts_dict[ifo] = TimeSeries.fetch_open_data(ifo, start, end, cache=False)
-        ts_dict = ts_dict.resample(sample_rate)
+            ts_dict[ifo] = TimeSeries.fetch_open_data(ifo, start, end, sample_rate=sample_rate, cache=False)
         ts_dict.write(fname, format='hdf5')
 
 if __name__ == '__main__':
-    obs = 'O3a'
+    obs = 'O3b'
     base_url = f'https://gwosc.org/api/v2/runs/{obs}/timelines'
     data_dir = Path(f'/n/holystore01/LABS/iaifi_lab/Lab/kyoon/DATA/{obs}_H1_L1_V1_4096Hz')
     load_data(base_url=base_url, ifos=['H1', 'L1', 'V1'], sample_rate=4096, data_dir=data_dir)
