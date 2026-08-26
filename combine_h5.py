@@ -155,7 +155,9 @@ def main():
     )
     parser.add_argument(
         "--no-delete",
-        action="store_false",
+        dest="no_delete",
+        action="store_true",
+        default=False,
         help="Keep intermediate files after combining (default: delete them).",
     )
     parser.add_argument("--verbose", action="store_true", help="Enable info logging.")
@@ -173,19 +175,29 @@ def main():
         return
 
     # Otherwise, expect `input_dir` to contain train/test/val subdirectories.
-    # Subdirectories that are missing or have no matching files are skipped with a warning.
+    # Subdirectories that are missing or have no matching files are skipped.
     subsets = ["train", "test", "val"]
+    combined_splits, skipped_splits = [], []
 
     for s in subsets:
         in_dir = os.path.join(args.input_dir, s)
         if not os.path.isdir(in_dir):
-            logging.warning("Subdirectory %s not found — skipping.", in_dir)
+            print(f"[combine_h5] SKIP  {s}: directory not found ({in_dir})")
+            skipped_splits.append(s)
             continue
         out_path = os.path.join(in_dir, f"{args.out_prefix}_{s}.h5")
-        logging.info("Combining %s -> %s", in_dir, out_path)
+        print(f"[combine_h5] START {s}: {in_dir} -> {out_path}")
         combined = combine_h5(in_dir, out_path, args.pattern, args.chunk_size)
-        if combined and not args.no_delete:
-            _remove_sig0_files(in_dir, args.pattern)
+        if combined:
+            print(f"[combine_h5] DONE  {s}: wrote {out_path}")
+            combined_splits.append(s)
+            if not args.no_delete:
+                _remove_sig0_files(in_dir, args.pattern)
+        else:
+            print(f"[combine_h5] SKIP  {s}: no matching files in {in_dir}")
+            skipped_splits.append(s)
+
+    print(f"[combine_h5] combined={combined_splits}  skipped={skipped_splits}")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 from utils import load_config
 from injections import injection
 import torch
+import torch.nn.functional as F
 import numpy as np
 import argparse
 from pathlib import Path
@@ -9,6 +10,8 @@ import os
 import gc
 from tqdm import tqdm
 from gwpy.timeseries import TimeSeries
+from ml4gw.gw import compute_network_snr
+from ml4gw.transforms import SpectralDensity
 
 def _is_valid(whitened_signal):
     if torch.isnan(whitened_signal).any():
@@ -21,6 +24,19 @@ def _resample(tensor, orig_freq, new_freq):
     arr = tensor.cpu().numpy()
     return np.array([[TimeSeries(arr[b, c], sample_rate=orig_freq).resample(new_freq).value
                       for c in range(arr.shape[1])] for b in range(arr.shape[0])])
+
+def _snr_from_downsampled(signal_ds, bkg_ds, sample_rate, fftlength, average, highpass):
+    """Recompute network SNR from the already-downsampled whitened signal,
+    with the PSD estimated from the corresponding downsampled whitened_bkg
+    (matches GWDatasetGeneration/scripts/verify_snr.py)."""
+    signal_ds = torch.as_tensor(signal_ds, dtype=torch.float64)
+    bkg_ds = torch.as_tensor(bkg_ds, dtype=torch.float64)
+    spectral_density = SpectralDensity(sample_rate=sample_rate, fftlength=fftlength, average=average)
+    n_freq = signal_ds.shape[-1] // 2 + 1
+    psd = spectral_density(bkg_ds)
+    psd = F.interpolate(psd, size=(n_freq,), mode='linear')
+    with torch.no_grad():
+        return compute_network_snr(signal_ds, psd, sample_rate, highpass=highpass).numpy()
 
 def main(config_path: str, data_dir: str, output_dir: str, prefix: str='sig', num_waveforms: int = None):
 
@@ -68,11 +84,30 @@ def main(config_path: str, data_dir: str, output_dir: str, prefix: str='sig', nu
 
                 orig_freq = config.general.sample_rate
                 new_freq = orig_freq // downsample_rate
+                signal_ds = _resample(whitened_signal, orig_freq, new_freq)
+                bkg_ds = _resample(whitened_bkg, orig_freq, new_freq)
+
+                snr_kwargs = dict(sample_rate=new_freq, fftlength=config.whiten.fftlength,
+                                  average=config.whiten.average, highpass=config.general.f_min)
+
+                # Rescale the signal so the SNR measured on the stored (whitened,
+                # downsampled) data equals the drawn target exactly. Whitening and
+                # resampling are linear and the PSD comes from the background alone,
+                # so scaling the signal by k scales the measured SNR by exactly k.
+                measured = _snr_from_downsampled(signal_ds, bkg_ds, **snr_kwargs)
+                target = params['target_snr'].cpu().numpy()
+                signal_ds = signal_ds * (target / measured)[:, None, None]
+
+                # injected = bkg + signal, exact by linearity of whiten() and resample()
+                injected_ds = bkg_ds + signal_ds
+
+                params['snr'] = torch.as_tensor(
+                    _snr_from_downsampled(signal_ds, bkg_ds, **snr_kwargs))
                 # Shape: (B, nifos, L)
                 with h5py.File(outfile, 'w') as h5f:
-                    h5f.create_dataset('whitened_injected', data=_resample(whitened_injected, orig_freq, new_freq))
-                    h5f.create_dataset('whitened_signal', data=_resample(whitened_signal, orig_freq, new_freq))
-                    h5f.create_dataset('whitened_bkg', data=_resample(whitened_bkg, orig_freq, new_freq))
+                    h5f.create_dataset('whitened_injected', data=injected_ds)
+                    h5f.create_dataset('whitened_signal', data=signal_ds)
+                    h5f.create_dataset('whitened_bkg', data=bkg_ds)
                     # h5f.create_dataset('raw_signal', data=_resample(raw_signal, orig_freq, new_freq))
                     # h5f.create_dataset('raw_bkg', data=_resample(raw_bkg, orig_freq, new_freq))
                     # h5f.create_dataset('whitened_injected', data=whitened_injected.cpu().numpy())

@@ -25,7 +25,7 @@ def injection(config, data_dir: str, device: str, inject: bool):
         )
 
     # Verify the actual sample rate of the background files matches bkg_sample_rate.
-    fnames_all = [f for f in data_dir.iterdir() if f.stat().st_size > 0]
+    fnames_all = [f for f in data_dir.iterdir() if f.is_file() and f.stat().st_size > 0]
     with h5py.File(fnames_all[0], 'r') as f:
         actual_rate = round(1 / f[ifos[0]].attrs['dx'])
     if actual_rate != bkg_sample_rate:
@@ -106,7 +106,13 @@ def injection(config, data_dir: str, device: str, inject: bool):
         args = config.snr_reweighting.args
         target_snrs = func(*args).sample((batch_size,)).to(device)
 
-        waveforms = reweight_snrs(responses=waveforms, target_snrs=target_snrs, psd=psd, sample_rate=sample_rate, highpass=f_min,)
+        # Reweight within the band that survives downsampling (lowpass at the
+        # post-downsample Nyquist), so target_snrs directly equals the SNR
+        # recoverable from the stored (downsampled) data, factor 1 not ~0.72.
+        downsample_rate = config.general.downsample_rate or 1
+        lowpass = (sample_rate / downsample_rate) / 2 if downsample_rate > 1 else None
+
+        waveforms = reweight_snrs(responses=waveforms, target_snrs=target_snrs, psd=psd, sample_rate=sample_rate, highpass=f_min, lowpass=lowpass,)
 
         raw_bkg = injected.clone()
         waveforms_f32 = waveforms.float()
@@ -118,6 +124,9 @@ def injection(config, data_dir: str, device: str, inject: bool):
         # compute network SNR
         network_snr = compute_network_snr(responses=waveforms, psd=psd, sample_rate=sample_rate, highpass=f_min)
         params['snr'] = network_snr
+        # The drawn target is carried through so main.py can rescale the signal
+        # after whitening/downsampling, where the SNR is finally measured.
+        params['target_snr'] = target_snrs
 
         # Compute whitened signal
         raw_signal = torch.zeros_like(kernel)
